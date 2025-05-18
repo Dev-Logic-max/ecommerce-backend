@@ -1,0 +1,188 @@
+// This is your Prisma schema file,
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model (core entity)
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  email     String?  // Optional during signup, required for role upgrades
+  phone     String?  // Optional, for alternative contact
+  password  String   // Hashed password
+  role      Role     @relation(fields: [roleId], references: [id])
+  roleRequests RoleRequest[]
+  roleId    Int
+  profile   Profile?
+  shops     Shop[]   // Shops owned by Retailer/Merchant
+  warehouse Warehouse? // Warehouse owned by Supplier
+  orders    Order[]  // Orders placed by Customer
+  notifications Notification[] // Notifications received
+  // connections Connection[] // Retailer-Supplier-Courier connections
+  retailerConnections Connection[] @relation("RetailerConnection") 
+  supplierConnections Connection[] @relation("SupplierConnection") 
+  courierConnections  Connection[] @relation("CourierConnection")
+  // shopSales ShopSale[] // Shops listed for sale or sale requests
+  soldShops   ShopSale[]   @relation("SellerShopSale") 
+  boughtShops ShopSale[]   @relation("BuyerShopSale")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Role model (defines user roles)
+model Role {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique // Developer, PlatformAdmin, OperationsAdmin, Retailer, Merchant, Supplier, Courier, Customer
+  users     User[]
+}
+
+enum RoleRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model RoleRequest {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  requestedRole String // e.g., "Retailer"
+  status    RoleRequestStatus  @default(PENDING) // Using the enum here
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Profile model (additional user info)
+model Profile {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  user      User     @relation(fields: [userId], references: [id])
+  name      String
+  address   String?
+  city      String?
+  country   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Shop model (owned by Retailer or Merchant)
+model Shop {
+  id          Int        @id @default(autoincrement())
+  name        String
+  description String?
+  ownerId     Int
+  owner       User       @relation(fields: [ownerId], references: [id])
+  inventory   Inventory?
+  sales       ShopSale[] // Shops listed for sale
+  connections Connection[] // Connections with Suppliers/Couriers
+  orders      Order[]    @relation("ShopOrders") // Added inverse relation
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// Inventory model (products for a shop)
+model Inventory {
+  id        Int        @id @default(autoincrement())
+  shopId    Int        @unique
+  shop      Shop       @relation(fields: [shopId], references: [id])
+  products  Product[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+// Product model (items in inventory)
+model Product {
+  id          Int        @id @default(autoincrement())
+  inventoryId Int
+  inventory   Inventory  @relation(fields: [inventoryId], references: [id])
+  warehouseId   Int?       // Added for Warehouse relation
+  warehouse     Warehouse? @relation("WarehouseProducts", fields: [warehouseId], references: [id]) // Added inverse relation
+  name        String
+  description String?
+  price       Float
+  stock       Int
+  category    String?    // e.g., Electronics, Clothing
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// Warehouse model (owned by Supplier)
+model Warehouse {
+  id          Int        @id @default(autoincrement())
+  supplierId  Int        @unique
+  supplier    User       @relation(fields: [supplierId], references: [id])
+  name        String
+  location    String?
+  products    Product[] @relation("WarehouseProducts")  // Products in warehouse
+  connections Connection[] @relation("WarehouseConnections") // Connections with Retailers/Merchants
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// Connection model (Retailer-Supplier or Retailer-Courier)
+model Connection {
+  id          Int        @id @default(autoincrement())
+  retailerId  Int        // Retailer or Merchant
+  supplierId  Int?       // Optional, for Retailer-Supplier
+  courierId   Int?       // Optional, for Retailer-Courier
+  status      String     // Pending, Approved, Rejected
+  retailer    User       @relation("RetailerConnection", fields: [retailerId], references: [id])
+  supplier    User?      @relation("SupplierConnection", fields: [supplierId], references: [id])
+  courier     User?      @relation("CourierConnection", fields: [courierId], references: [id])
+  shopId      Int
+  shop        Shop       @relation(fields: [shopId], references: [id])
+  warehouseId   Int?       // Added for Warehouse relation
+  warehouse     Warehouse? @relation("WarehouseConnections", fields: [warehouseId], references: [id]) // Added inverse relation
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// ShopSale model (shops for sale or sale requests)
+model ShopSale {
+  id          Int        @id @default(autoincrement())
+  shopId      Int
+  shop        Shop       @relation(fields: [shopId], references: [id])
+  sellerId    Int
+  seller      User       @relation("SellerShopSale", fields: [sellerId], references: [id])
+  buyerId     Int?       // Optional, for direct sale requests
+  buyer       User?      @relation("BuyerShopSale", fields: [buyerId], references: [id])
+  price       Float
+  status      String     // Listed, Pending, Approved, Rejected
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// Order model (customer purchases)
+model Order {
+  id          Int        @id @default(autoincrement())
+  customerId  Int
+  customer    User       @relation(fields: [customerId], references: [id])
+  shopId      Int
+  shop        Shop       @relation("ShopOrders", fields: [shopId], references: [id])
+  products    Json       // Store product IDs and quantities (simplified)
+  total       Float
+  status      String     // Processing, Shipped, Delivered
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// Notification model (in-app notifications)
+model Notification {
+  id          Int        @id @default(autoincrement())
+  userId      Int
+  user        User       @relation(fields: [userId], references: [id])
+  message     String
+  type        String     // RoleUpgrade, SaleApproval, OrderUpdate
+  read        Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+}
