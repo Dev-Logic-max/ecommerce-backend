@@ -13,37 +13,39 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User model (core entity)
+// 📋 User Model - Core entity representing users with roles and relationships
 model User {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique
-  email     String?  // Optional during signup, required for role upgrades
-  phone     String?  // Optional, for alternative contact
-  password  String   // Hashed password
-  role      Role     @relation(fields: [roleId], references: [id])
-  roleRequests RoleRequest[]
-  roleId    Int
-  profile   Profile?
-  shops     Shop[]   // Shops owned by Retailer/Merchant
-  warehouse Warehouse? // Warehouse owned by Supplier
-  orders    Order[]  // Orders placed by Customer
-  notifications Notification[] // Notifications received
-  // connections Connection[] // Retailer-Supplier-Courier connections
-  retailerConnections Connection[] @relation("RetailerConnection") 
-  supplierConnections Connection[] @relation("SupplierConnection") 
-  courierConnections  Connection[] @relation("CourierConnection")
-  // shopSales ShopSale[] // Shops listed for sale or sale requests
-  soldShops   ShopSale[]   @relation("SellerShopSale") 
-  boughtShops ShopSale[]   @relation("BuyerShopSale")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                  Int            @id @default(autoincrement())
+  username            String         @unique
+  email               String?        // Optional during signup, required for role upgrades
+  phone               String?        // Optional, for alternative contact
+  password            String         // Hashed password
+  profilePicture      String?
+  role                Role           @relation(fields: [roleId], references: [id])
+  roleId              Int
+  profile             Profile?
+  shops               Shop[]         // Shops owned by Retailer/Merchant
+  warehouse           Warehouse?     // Warehouse owned by Supplier
+  orders              Order[]        // Orders placed by Customer
+  notifications       Notification[] // Notifications received
+  retailerConnections Connection[]   @relation("RetailerConnection")
+  supplierConnections Connection[]   @relation("SupplierConnection")
+  courierConnections  Connection[]   @relation("CourierConnection")
+  soldShops           ShopSale[]     @relation("SellerShopSale")
+  boughtShops         ShopSale[]     @relation("BuyerShopSale")
+  roleRequest         RoleRequest[]
+  actions             RoleRequest[]  @relation("AdminAction") // Actions taken by this admin
+  carts               Cart[]         @relation("CartUser")    // Opposite relation for Cart
+  wishlists           Wishlist[]     @relation("WishlistUser") // Opposite relation for Wishlist
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 }
 
-// Role model (defines user roles)
+// 🎭 Role Model - Defines user roles with unique names
 model Role {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique // Developer, PlatformAdmin, OperationsAdmin, Retailer, Merchant, Supplier, Courier, Customer
-  users     User[]
+  id    Int    @id @default(autoincrement())
+  name  String @unique // Developer, PlatformAdmin, OperationsAdmin, Retailer, Merchant, Supplier, Courier, Customer
+  users User[]
 }
 
 enum RoleRequestStatus {
@@ -52,17 +54,20 @@ enum RoleRequestStatus {
   REJECTED
 }
 
+// 📝 Role Request Model - Tracks role change requests with status
 model RoleRequest {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
-  requestedRole String // e.g., "Retailer"
-  status    RoleRequestStatus  @default(PENDING) // Using the enum here
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            Int               @id @default(autoincrement())
+  userId        Int
+  user          User              @relation(fields: [userId], references: [id])
+  requestedRole String            // ➡️ e.g., "Retailer"
+  status        RoleRequestStatus @default(PENDING) // Using the enum here
+  adminId       Int?              // ➡️ Tracking "Developer" who approves/rejects
+  admin         User?             @relation("AdminAction", fields: [adminId], references: [id])
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 }
 
-// Profile model (additional user info)
+// 👤 Profile Model - Additional user info like name and address
 model Profile {
   id        Int      @id @default(autoincrement())
   userId    Int      @unique
@@ -75,61 +80,62 @@ model Profile {
   updatedAt DateTime @updatedAt
 }
 
-// Shop model (owned by Retailer or Merchant)
+enum ShopStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// 🏪 Shop Model - Owned by Retailer or Merchant with status tracking
 model Shop {
-  id          Int        @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   name        String
   description String?
   ownerId     Int
-  owner       User       @relation(fields: [ownerId], references: [id])
-  inventory   Inventory?
-  sales       ShopSale[] // Shops listed for sale
+  owner       User         @relation(fields: [ownerId], references: [id])
+  products    Product[]    // Direct relation to products
+  sales       ShopSale[]   // Shops listed for sale
   connections Connection[] // Connections with Suppliers/Couriers
-  orders      Order[]    @relation("ShopOrders") // Added inverse relation
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  orders      Order[]      @relation("ShopOrders") // Added inverse relation
+  status      ShopStatus   @default(PENDING)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }
 
-// Inventory model (products for a shop)
-model Inventory {
-  id        Int        @id @default(autoincrement())
-  shopId    Int        @unique
-  shop      Shop       @relation(fields: [shopId], references: [id])
-  products  Product[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-}
-
-// Product model (items in inventory)
+// 📦 Product Model - Items in inventory with category and warehouse relations
 model Product {
   id          Int        @id @default(autoincrement())
-  inventoryId Int
-  inventory   Inventory  @relation(fields: [inventoryId], references: [id])
-  warehouseId   Int?       // Added for Warehouse relation
-  warehouse     Warehouse? @relation("WarehouseProducts", fields: [warehouseId], references: [id]) // Added inverse relation
+  shopId      Int        // Direct relation to Shop
+  shop        Shop       @relation(fields: [shopId], references: [id])
+  warehouseId Int?       // Added for Warehouse relation (Optional relation)
+  warehouse   Warehouse? @relation("WarehouseProducts", fields: [warehouseId], references: [id]) // Added inverse relation
   name        String
   description String?
   price       Float
   stock       Int
-  category    String?    // e.g., Electronics, Clothing
+  categoryId  Int?
+  category    Category?  @relation(fields: [categoryId], references: [id]) // e.g., Electronics, Clothing
+  orders      Order[]    // Added relation to orders
+  carts       Cart[]     @relation("CartProduct")    // Opposite relation for Cart
+  wishlists   Wishlist[] @relation("WishlistProduct") // Opposite relation for Wishlist
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 }
 
-// Warehouse model (owned by Supplier)
+// 🏭 Warehouse Model - Owned by Supplier with product storage
 model Warehouse {
-  id          Int        @id @default(autoincrement())
-  supplierId  Int        @unique
-  supplier    User       @relation(fields: [supplierId], references: [id])
+  id          Int          @id @default(autoincrement())
+  supplierId  Int          @unique
+  supplier    User         @relation(fields: [supplierId], references: [id])
   name        String
   location    String?
-  products    Product[] @relation("WarehouseProducts")  // Products in warehouse
+  products    Product[]    @relation("WarehouseProducts") // Products in warehouse
   connections Connection[] @relation("WarehouseConnections") // Connections with Retailers/Merchants
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }
 
-// Connection model (Retailer-Supplier or Retailer-Courier)
+// 🤝 Connection Model - Links Retailer-Supplier or Retailer-Courier
 model Connection {
   id          Int        @id @default(autoincrement())
   retailerId  Int        // Retailer or Merchant
@@ -141,48 +147,86 @@ model Connection {
   courier     User?      @relation("CourierConnection", fields: [courierId], references: [id])
   shopId      Int
   shop        Shop       @relation(fields: [shopId], references: [id])
-  warehouseId   Int?       // Added for Warehouse relation
-  warehouse     Warehouse? @relation("WarehouseConnections", fields: [warehouseId], references: [id]) // Added inverse relation
+  warehouseId Int?       // Added for Warehouse relation (Optional relation)
+  warehouse   Warehouse? @relation("WarehouseConnections", fields: [warehouseId], references: [id]) // Added inverse relation
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 }
 
-// ShopSale model (shops for sale or sale requests)
+// 🏷️ Shop Sale Model - Tracks shops for sale or sale requests
 model ShopSale {
-  id          Int        @id @default(autoincrement())
-  shopId      Int
-  shop        Shop       @relation(fields: [shopId], references: [id])
-  sellerId    Int
-  seller      User       @relation("SellerShopSale", fields: [sellerId], references: [id])
-  buyerId     Int?       // Optional, for direct sale requests
-  buyer       User?      @relation("BuyerShopSale", fields: [buyerId], references: [id])
-  price       Float
-  status      String     // Listed, Pending, Approved, Rejected
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id        Int      @id @default(autoincrement())
+  shopId    Int
+  shop      Shop     @relation(fields: [shopId], references: [id])
+  sellerId  Int
+  seller    User     @relation("SellerShopSale", fields: [sellerId], references: [id])
+  buyerId   Int?     // Optional, for direct sale requests
+  buyer     User?    @relation("BuyerShopSale", fields: [buyerId], references: [id])
+  price     Float
+  status    String   // Listed, Pending, Approved, Rejected
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
-// Order model (customer purchases)
+// 🛒 Order Model - Customer purchases with status tracking
 model Order {
-  id          Int        @id @default(autoincrement())
-  customerId  Int
-  customer    User       @relation(fields: [customerId], references: [id])
-  shopId      Int
-  shop        Shop       @relation("ShopOrders", fields: [shopId], references: [id])
-  products    Json       // Store product IDs and quantities (simplified)
-  total       Float
-  status      String     // Processing, Shipped, Delivered
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id         Int      @id @default(autoincrement())
+  userId     Int      // Changed from customerId to userId for consistency
+  user       User     @relation(fields: [userId], references: [id])
+  shopId     Int
+  shop       Shop     @relation("ShopOrders", fields: [shopId], references: [id])
+  productId  Int      // Added to link to a specific product
+  product    Product  @relation(fields: [productId], references: [id])
+  quantity   Int      @default(1) // Added quantity field
+  total      Float
+  status     String // Processing, Shipped, Delivered
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
-// Notification model (in-app notifications)
+// 🔔 Notification Model - In-app notifications for users
 model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  message   String
+  type      String   // RoleUpgrade, SaleApproval, OrderUpdate
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// 🛍️ Cart Model - User shopping cart with unique user-product pairs
+model Cart {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], name: "CartUser")
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], name: "CartProduct")
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, productId]) // Unique constraint for composite key
+}
+
+// ❤️ Wishlist Model - User wishlist with unique user-product pairs
+model Wishlist {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], name: "WishlistUser")
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], name: "WishlistProduct")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, productId]) // Unique constraint for composite key
+}
+
+// 📑 Category Model - Product categories with unique names
+model Category {
   id          Int        @id @default(autoincrement())
-  userId      Int
-  user        User       @relation(fields: [userId], references: [id])
-  message     String
-  type        String     // RoleUpgrade, SaleApproval, OrderUpdate
-  read        Boolean    @default(false)
+  name        String     @unique
+  products    Product[]
   createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 }
