@@ -105,10 +105,10 @@ model Shop {
 // 📦 Product Model - Items in inventory with category and warehouse relations
 model Product {
   id          Int        @id @default(autoincrement())
-  shopId      Int        // Direct relation to Shop
-  shop        Shop       @relation(fields: [shopId], references: [id])
-  warehouseId Int?       // Added for Warehouse relation (Optional relation)
-  warehouse   Warehouse? @relation("WarehouseProducts", fields: [warehouseId], references: [id]) // Added inverse relation
+  shopId      Int?       // Optional foreign key to Shop
+  shop        Shop?      @relation(fields: [shopId], references: [id]) // Relation to Shop
+  warehouseId Int?       // Optional foreign key to Warehouse
+  warehouse   Warehouse? @relation("WarehouseProducts", fields: [warehouseId], references: [id]) // Relation to Warehouse
   name        String
   description String?
   price       Float
@@ -120,6 +120,9 @@ model Product {
   wishlists   Wishlist[] @relation("WishlistProduct") // Opposite relation for Wishlist
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+
+  @@index([shopId])
+  @@index([warehouseId])
 }
 
 // 🏭 Warehouse Model - Owned by Supplier with product storage
@@ -129,6 +132,9 @@ model Warehouse {
   supplier    User         @relation(fields: [supplierId], references: [id])
   name        String
   location    String?
+  description   String?
+  warehouseIcon String?
+  capacity      Int?
   products    Product[]    @relation("WarehouseProducts") // Products in warehouse
   connections Connection[] @relation("WarehouseConnections") // Connections with Retailers/Merchants
   createdAt   DateTime     @default(now())
@@ -173,8 +179,8 @@ model Order {
   id         Int      @id @default(autoincrement())
   userId     Int      // Changed from customerId to userId for consistency
   user       User     @relation(fields: [userId], references: [id])
-  shopId     Int
-  shop       Shop     @relation("ShopOrders", fields: [shopId], references: [id])
+  shopId     Int?     // Made optional to support warehouse orders
+  shop       Shop?    @relation("ShopOrders", fields: [shopId], references: [id])
   productId  Int      // Added to link to a specific product
   product    Product  @relation(fields: [productId], references: [id])
   quantity   Int      @default(1) // Added quantity field
@@ -182,6 +188,10 @@ model Order {
   status     String // Processing, Shipped, Delivered
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+  @@index([shopId])
+  @@index([productId])
 }
 
 // 🔔 Notification Model - In-app notifications for users

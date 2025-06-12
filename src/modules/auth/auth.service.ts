@@ -10,10 +10,15 @@ import { CreateRoleDto } from './dto/role.dto';
 import { RoleRequestDto } from './dto/role-request.dto';
 import { CreateShopDto } from './dto/create-shop.dto';
 import { UpdateShopDto } from './dto/update-shop.dto';
-import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateShopProductDto } from './dto/create-shop-product.dto';
+import { UpdateShopProductDto } from './dto/update-shop-product.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateWarehouseDto } from './dto/create-warehouse.dto';
+import { CreateWarehouseProductDto } from './dto/create-warehouse-product.dto';
+import { UpdateWarehouseProductDto } from './dto/update-warehouse-product.dto';
+import { CreateWarehouseOrderDto } from './dto/create-warehouse-order.dto';
+import { RequestWarehouseOrderDto } from './dto/request-warehouse-order.dto';
 
 @Injectable()
 export class AuthService {
@@ -166,6 +171,34 @@ export class AuthService {
         return { user: { id: user.id, username: user.username, email: user.email, phone: user.phone, profilePicture: user.profilePicture } };
     }
 
+    async getUsers() {
+        return await this.prisma.user.findMany({
+            include: { role: true },
+        });
+    }
+
+    async getUser(id: number) {
+        return await this.prisma.user.findUnique({
+            where: { id },
+            include: {
+                role: true,
+                profile: true,
+                shops: true,
+                warehouse: true,
+                orders: true,
+                notifications: true,
+                retailerConnections: true,
+                supplierConnections: true,
+                courierConnections: true,
+                soldShops: true,
+                boughtShops: true,
+                roleRequest: true,
+                carts: true,
+                wishlists: true,
+            },
+        });
+    }
+
     // 🛠️ Role Management
     async createRole(dto: CreateRoleDto) {
         const { name } = dto;
@@ -192,6 +225,12 @@ export class AuthService {
         if (existingRequest) {
             throw new ConflictException('Pending request already exists for this role');
         }
+        
+        // Verify user exists before creating request
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
 
         return await this.prisma.roleRequest.create({
             data: { userId, requestedRole },
@@ -199,14 +238,24 @@ export class AuthService {
     }
 
     async getRoleRequests(userId: number) {
-        const user = await this.prisma.user.findUnique({ where: { id: userId } });
-        if (!user || user.roleId !== 1) {
-            throw new UnauthorizedException('Only Developer can view role requests');
+        try {
+            console.log('Fetching role requests for userId:', userId); // Debug log
+            if (!userId || isNaN(userId)) {
+                throw new UnauthorizedException('Invalid user ID');
+            }
+            const user = await this.prisma.user.findUnique({ where: { id: userId } });
+            if (!user || user.roleId !== 1) {
+                throw new UnauthorizedException('Only Developer can view role requests');
+            }
+            const requests = await this.prisma.roleRequest.findMany({
+                where: { status: 'PENDING' },
+                include: { user: true },
+            });
+            return requests.length > 0 ? requests : []; // Return empty array if no requests
+        } catch (error) {
+            console.error('Error fetching role requests:', error);
+            throw error; // Let the controller handle the error
         }
-        return await this.prisma.roleRequest.findMany({
-            where: { status: 'PENDING' },
-            include: { user: true },
-        });
     }
 
     async getUserRoleRequests(userId: number) {
@@ -347,50 +396,47 @@ export class AuthService {
         return await this.prisma.product.findMany({ include: { shop: true } });
     }
 
-    async createProduct(createProductDto: CreateProductDto, userId: number) {
+    async createShopProduct(createShopProductDto: CreateShopProductDto, userId: number) {
         const shop = await this.prisma.shop.findUnique({
-            where: { id: createProductDto.shopId },
+            where: { id: createShopProductDto.shopId },
             select: { id: true, ownerId: true, status: true }, // Explicitly select status
         })
-
         if (!shop || shop.ownerId !== userId) {
             throw new UnauthorizedException('You don not own this shop');
         }
-
         if (shop.status !== 'APPROVED') {
             throw new BadRequestException('Shop must be approved to add products');
         }
-
         return await this.prisma.product.create({
             data: {
-                name: createProductDto.name,
-                description: createProductDto.description,
-                price: createProductDto.price,
-                stock: createProductDto.stock,
-                shopId: createProductDto.shopId,
+                name: createShopProductDto.name,
+                description: createShopProductDto.description,
+                price: createShopProductDto.price,
+                stock: createShopProductDto.stock,
+                shopId: createShopProductDto.shopId,
             },
         });
     }
 
-    async updateProduct(id: number, updateProductDto: UpdateProductDto, userId: number) {
+    async updateShopProduct(id: number, updateShopProductDto: UpdateShopProductDto, userId: number) {
         const product = await this.prisma.product.findUnique({ where: { id }, include: { shop: true } });
-        if (!product || product.shop.ownerId !== userId) {
+        if (!product || !product.shop || product.shop.ownerId !== userId) {
             throw new UnauthorizedException('You do not own this product');
         }
         return await this.prisma.product.update({
             where: { id },
             data: {
-                name: updateProductDto.name,
-                description: updateProductDto.description,
-                price: updateProductDto.price,
-                stock: updateProductDto.stock,
+                name: updateShopProductDto.name,
+                description: updateShopProductDto.description,
+                price: updateShopProductDto.price,
+                stock: updateShopProductDto.stock,
             },
         });
     }
 
-    async deleteProduct(id: number, userId: number) {
+    async deleteShopProduct(id: number, userId: number) {
         const product = await this.prisma.product.findUnique({ where: { id }, include: { shop: true } });
-        if (!product || product.shop.ownerId !== userId) {
+        if (!product || !product.shop || product.shop.ownerId !== userId) {
             throw new UnauthorizedException('You do not own this product');
         }
         return await this.prisma.product.delete({ where: { id } });
@@ -451,10 +497,13 @@ export class AuthService {
     async createOrder(createOrderDto: CreateOrderDto, userId: number) {
         const product = await this.prisma.product.findUnique({
             where: { id: createOrderDto.productId },
-            include: { shop: true },
+            include: { shop: true, warehouse: true }, // Include both relations
         });
         if (!product || product.stock < createOrderDto.quantity) {
             throw new BadRequestException('Product not available or insufficient stock');
+        }
+        if (!product.shop) {
+            throw new BadRequestException('Orders can only be placed for shop products');
         }
         if (product.shop.status !== 'APPROVED') {
             throw new BadRequestException('Shop is not approved');
@@ -466,7 +515,7 @@ export class AuthService {
                 userId,
                 productId: createOrderDto.productId,
                 quantity: createOrderDto.quantity,
-                shopId: product.shopId,
+                shopId: product.shopId!, // Non-null assertion since we checked shop exists
                 total,
                 status: 'PENDING',
             },
@@ -483,6 +532,82 @@ export class AuthService {
             `New order #${order.id} received!`,
             'ORDER_RECEIVED',
         );
+
+        return order;
+    }
+
+    async createWarehouseOrder(createWarehouseOrderDto: CreateWarehouseOrderDto, userId: number, shopId?: number) {
+        const product = await this.prisma.product.findUnique({
+            where: { id: createWarehouseOrderDto.productId },
+            include: { warehouse: true },
+        });
+        if (!product || product.stock < createWarehouseOrderDto.quantity) {
+            throw new BadRequestException('Product not available or insufficient stock');
+        }
+        if (!product.warehouse) {
+            throw new UnauthorizedException('Product is not a warehouse product');
+        }
+
+        const total = product.price * createWarehouseOrderDto.quantity;
+        const order = await this.prisma.order.create({
+            data: {
+                userId, // Can be a customer or shop owner
+                productId: createWarehouseOrderDto.productId,
+                quantity: createWarehouseOrderDto.quantity,
+                shopId, // Optional, set if shop owner places the order
+                total,
+                status: shopId ? 'PENDING' : 'PROCESSING', // PENDING for shop requests, PROCESSING for customer orders
+            },
+        });
+
+        await this.prisma.product.update({
+            where: { id: createWarehouseOrderDto.productId },
+            data: { stock: product.stock - createWarehouseOrderDto.quantity },
+        });
+
+        if (shopId) {
+            await this.createNotification(userId, `Warehouse order #${order.id} requested successfully!`, 'WAREHOUSE_ORDER_REQUESTED');
+            await this.createNotification(
+                product.warehouse.supplierId,
+                `New warehouse order request #${order.id} from shop ${shopId}!`,
+                'WAREHOUSE_ORDER_REQUEST_RECEIVED',
+            );
+        } else {
+            await this.createNotification(userId, `Warehouse order #${order.id} placed successfully!`, 'WAREHOUSE_ORDER_PLACED');
+        }
+
+        return order;
+    }
+
+    async requestWarehouseOrder(requestWarehouseOrderDto: RequestWarehouseOrderDto, userId: number) {
+        const product = await this.prisma.product.findUnique({
+            where: { id: requestWarehouseOrderDto.productId },
+            include: { warehouse: true },
+        });
+        if (!product || product.stock < requestWarehouseOrderDto.quantity) {
+            throw new BadRequestException('Product not available or insufficient stock');
+        }
+        if (!product.warehouse) {
+            throw new UnauthorizedException('Product is not a warehouse product');
+        }
+
+        const order = await this.prisma.order.create({
+            data: {
+                userId,
+                productId: requestWarehouseOrderDto.productId,
+                quantity: requestWarehouseOrderDto.quantity,
+                shopId: requestWarehouseOrderDto.shopId, // Set for shop owners, null for customers
+                total: product.price * requestWarehouseOrderDto.quantity,
+                status: 'REQUESTED', // New status for pending approval
+            },
+        });
+
+        await this.createNotification(
+            product.warehouse.supplierId,
+            `New warehouse order request #${order.id} from ${requestWarehouseOrderDto.shopId ? 'shop' : 'customer'}!`,
+            'WAREHOUSE_ORDER_REQUEST_RECEIVED',
+        );
+        await this.createNotification(userId, `Warehouse order request #${order.id} submitted!`, 'WAREHOUSE_ORDER_REQUEST_SUBMITTED');
 
         return order;
     }
@@ -506,9 +631,20 @@ export class AuthService {
             throw new NotFoundException('Order not found');
         }
 
-        const validStatuses = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
+        const validStatuses = ['REQUESTED', 'PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
         if (!validStatuses.includes(status)) {
             throw new BadRequestException('Invalid status');
+        }
+
+        if (order.status === 'REQUESTED' && status === 'PENDING') {
+            const product = await this.prisma.product.findUnique({ where: { id: order.productId } });
+            if (!product || product.stock < order.quantity) {
+                throw new BadRequestException('Insufficient stock to approve order');
+            }
+            await this.prisma.product.update({
+                where: { id: order.productId },
+                data: { stock: product.stock - order.quantity },
+            });
         }
 
         return await this.prisma.order.update({
@@ -540,6 +676,105 @@ export class AuthService {
 
     async removeFromWishlist(userId: number, productId: number) {
         return await this.prisma.wishlist.delete({ where: { userId_productId: { userId, productId } } });
+    }
+
+    // 🏬 Warehouse Management
+    async createWarehouse(supplierId: number, dto: CreateWarehouseDto) {
+        const existingWarehouse = await this.prisma.warehouse.findUnique({ where: { supplierId } });
+        if (existingWarehouse) {
+            throw new ConflictException('Warehouse already exists for this supplier');
+        }
+        return await this.prisma.warehouse.create({
+            data: {
+                supplierId,
+                name: dto.name,
+                location: dto.location,
+                description: dto.description,
+                warehouseIcon: dto.warehouseIcon,
+                capacity: dto.capacity,
+            },
+        });
+    }
+
+    async updateWarehouse(supplierId: number, data: { name?: string; location?: string }) {
+        return await this.prisma.warehouse.update({
+            where: { supplierId },
+            data,
+        });
+    }
+
+    async deleteWarehouse(supplierId: number) {
+        const warehouse = await this.prisma.warehouse.findUnique({ where: { supplierId } });
+        if (!warehouse) {
+            throw new NotFoundException('Warehouse not found for this supplier');
+        }
+        return await this.prisma.warehouse.delete({ where: { supplierId } });
+    }
+
+    async getWarehouse(supplierId: number) {
+        return await this.prisma.warehouse.findUnique({
+            where: { supplierId },
+            include: { products: true },
+        });
+    }
+
+    async getWarehouseProducts(warehouseId: number) {
+        return await this.prisma.product.findMany({
+            where: { warehouseId },
+            include: { warehouse: true },
+        });
+    }
+
+    async createWarehouseProduct(supplierId: number, data: CreateWarehouseProductDto) {
+        if (await this.prisma.warehouse.findUnique({ where: { supplierId } }) === null) {
+            throw new NotFoundException('Warehouse not found for this supplier');
+        }
+        return await this.prisma.product.create({
+            data: {
+                name: data.name,
+                description: data.description,
+                price: data.price,
+                stock: data.stock,
+                warehouseId: supplierId,
+            },
+        });
+    }
+
+    async updateWarehouseProduct(productId: number, supplierId: number, data: UpdateWarehouseProductDto) {
+        const product = await this.prisma.product.findUnique({ where: { id: productId }, include: { warehouse: true } });
+        if (!product || !product.warehouse || product.warehouse.supplierId !== supplierId) {
+            throw new UnauthorizedException('You do not own this product');
+        }
+        return await this.prisma.product.update({
+            where: { id: productId },
+            data: {
+                name: data.name,
+                description: data.description,
+                price: data.price,
+                stock: data.stock,
+            },
+        });
+    }
+
+    async deleteWarehouseProduct(productId: number, supplierId: number) {
+        const product = await this.prisma.product.findUnique({ where: { id: productId }, include: { warehouse: true } });
+        if (!product || !product.warehouse || product.warehouse.supplierId !== supplierId) {
+            throw new UnauthorizedException('You do not own this product');
+        }
+        return await this.prisma.product.delete({ where: { id: productId } });
+    }
+
+    async searchWarehouseProducts(query: string) {
+        return await this.prisma.product.findMany({
+            where: {
+                warehouseId: { not: null },
+                OR: [
+                    { name: { contains: query, mode: 'insensitive' } },
+                    { category: { is: { name: { contains: query, mode: 'insensitive' } } } },
+                ],
+            },
+            include: { warehouse: true },
+        });
     }
 
     // 🚚 Courier
