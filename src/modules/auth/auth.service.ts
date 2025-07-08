@@ -1,11 +1,14 @@
-import { Injectable, UnauthorizedException, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, NotFoundException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { config } from 'dotenv';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import * as fs from 'fs';
+import * as path from 'path';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { CreateUserDto } from '../user/dto/create-user.dto';
+import { UpdateUserDto } from '../user/dto/update-user.dto';
 import { CreateRoleDto } from './dto/role.dto';
 import { RoleRequestDto } from './dto/role-request.dto';
 import { CreateShopDto } from './dto/create-shop.dto';
@@ -19,6 +22,10 @@ import { CreateWarehouseProductDto } from './dto/create-warehouse-product.dto';
 import { UpdateWarehouseProductDto } from './dto/update-warehouse-product.dto';
 import { CreateWarehouseOrderDto } from './dto/create-warehouse-order.dto';
 import { RequestWarehouseOrderDto } from './dto/request-warehouse-order.dto';
+import { UpdateCategoryDto } from './dto/update-category.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+
+config(); // Load .env
 
 @Injectable()
 export class AuthService {
@@ -43,7 +50,7 @@ export class AuthService {
             throw new Error("❌ PrismaService is not initialized");
         }
 
-        const { username, email, phone, password } = dto;
+        const { username, email, phone, password, profile } = dto;
 
         // Check if username exists
         const existingUser = await this.prisma.user.findUnique({ where: { username } });
@@ -64,7 +71,30 @@ export class AuthService {
                 password: hashedPassword,
                 role: { connect: { name: 'Customer' } },
             },
+            include: { profile: true }, // Include profile to return null if not created
         });
+
+        // Create profile if provided
+        if (profile) {
+            const profileData = {
+                userId: user.id,
+                name: profile.name,
+                address: profile.address,
+                city: profile.city,
+                country: profile.country,
+            };
+            const filteredProfileData = Object.fromEntries(
+                Object.entries(profileData).filter(([_, value]) => value !== undefined && value !== null)
+            );
+            if (Object.keys(filteredProfileData).length > 0) {
+                await this.prisma.profile.create({
+                    data: {
+                        user: { connect: { id: user.id } }, // Connect to the created user
+                        ...filteredProfileData, // Add other profile fields
+                    },
+                });
+            }
+        }
 
         // Generate JWT
         const payload = { sub: user.id, username: user.username, role: user.roleId };
@@ -110,6 +140,31 @@ export class AuthService {
         return { token, user: { id: user.id, username: user.username, role: user.roleId } };
     }
 
+    async changePassword(userId: number, dto: ChangePasswordDto) {
+        const { currentPassword, newPassword } = dto;
+
+        // Find the user
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        // Verify current password
+        const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+        if (!isPasswordValid) {
+            throw new UnauthorizedException('Invalid current password');
+        }
+
+        // Hash and update new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { password: hashedPassword },
+        });
+
+        return { message: 'Password updated successfully' };
+    }
+
     // 👤 User Management
     async createUser(dto: CreateUserDto) {
         const { username, email, phone, password, roleId } = dto;
@@ -138,8 +193,37 @@ export class AuthService {
         return { user: { id: user.id, username: user.username, role: user.roleId } };
     }
 
+    async getDeveloperUsers() {
+        return await this.prisma.user.findMany({
+            where: { roleId: { in: [1] } },
+            include: { role: true }
+        })
+    }
+
+    async getDeveloperUser(id: number) {
+        return await this.prisma.user.findUnique({
+            where: { id },
+            include: {
+                role: true,
+                profile: true,
+                shops: true,
+                warehouse: true,
+                orders: true,
+                notifications: true,
+                retailerConnections: true,
+                supplierConnections: true,
+                courierConnections: true,
+                soldShops: true,
+                boughtShops: true,
+                roleRequest: true,
+                carts: true,
+                wishlists: true,
+            },
+        });
+    }
+
     async updateUser(userId: number, dto: UpdateUserDto) {
-        const { username, email, phone, password, profilePicture } = dto;
+        const { username, email, phone, profile } = dto;
 
         // Check if username is taken (if provided)
         if (username) {
@@ -149,30 +233,114 @@ export class AuthService {
             }
         }
 
-        // Hash password if provided
-        const updateData: any = { username, email, phone, profilePicture };
-        if (password) {
-            updateData.password = await bcrypt.hash(password, 10);
+        const updateData: any = { username, email, phone };
+
+        // Handle profile data
+        if (profile) {
+            const existingProfile = await this.prisma.profile.findUnique({ where: { userId } });
+            const profileData = {
+                name: profile.name,
+                address: profile.address,
+                city: profile.city,
+                country: profile.country,
+            };
+
+            // Filter out undefined or null values
+            const filteredProfileData = Object.fromEntries(
+                Object.entries(profileData).filter(([_, value]) => value !== undefined && value !== null)
+            );
+
+            if (Object.keys(filteredProfileData).length > 0) {
+                if (existingProfile) {
+                    // Update existing profile
+                    await this.prisma.profile.update({
+                        where: { userId },
+                        data: filteredProfileData,
+                    });
+                } else {
+                    // Create new profile only if at least one field is provided
+                    await this.prisma.profile.create({
+                        data: {
+                            userId,
+                            ...filteredProfileData,
+                        },
+                    });
+                }
+            }
         }
 
         const user = await this.prisma.user.update({
             where: { id: userId },
             data: updateData,
-            select: {
-                id: true,
-                username: true,
-                email: true,
-                phone: true,
-                profilePicture: true,
-                profile: true, // Include profile relation
+            include: {
+                role: true,
+                profile: true, // Include profile in response (null if not created)
             },
         });
 
-        return { user: { id: user.id, username: user.username, email: user.email, phone: user.phone, profilePicture: user.profilePicture } };
+        return { user: { id: user.id, username: user.username, email: user.email, phone: user.phone, profile: user.profile } };
+    }
+
+    async uploadAvatar(userId: number, file: Express.Multer.File) {
+        // Define upload directory
+        // const uploadDir = path.join(__dirname, '../../uploads/avatars');
+        // const uploadDir = path.join(process.env.UPLOAD_DIR || './uploads', 'avatars');
+        const uploadDir = path.join(process.cwd(), 'uploads', 'avatars'); // Use project root
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+            console.log("Created directory:", uploadDir);
+        }
+
+        // Validate file
+        if (!file) {
+            throw new BadRequestException('No file uploaded');
+        }
+
+        // Generate unique filename
+        const filename = `${userId}-${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`; // Sanitize filename
+        const filePath = path.join(uploadDir, filename);
+
+        console.log("Saving to:", path.join(__dirname, '../../uploads/avatars', filename));
+
+        try {
+            // Save file to filesystem
+            fs.writeFileSync(filePath, file.buffer);
+
+            // Update user with file path
+            const updatedUser = await this.prisma.user.update({
+                where: { id: userId },
+                data: { profilePicturePath: `/uploads/avatars/${filename}` },
+                include: { role: true, profile: true },
+            });
+
+            return {
+                status: 200,
+                message: 'Avatar uploaded successfully',
+                user: {
+                    id: updatedUser.id,
+                    username: updatedUser.username,
+                    email: updatedUser.email,
+                    phone: updatedUser.phone,
+                    profilePicturePath: updatedUser.profilePicturePath,
+                    profile: updatedUser.profile,
+                },
+            };
+        } catch (error) {
+            // Clean up file if update fails
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+            throw new InternalServerErrorException('Failed to upload avatar');
+        }
     }
 
     async getUsers() {
         return await this.prisma.user.findMany({
+            where: {
+                roleId: {
+                    notIn: [1], // Exclude Developer Only
+                },
+            },
             include: { role: true },
         });
     }
@@ -219,19 +387,29 @@ export class AuthService {
             throw new BadRequestException('Invalid role requested');
         }
 
+        // Check for any pending request
         const existingRequest = await this.prisma.roleRequest.findFirst({
             where: { userId, status: 'PENDING', requestedRole },
         });
         if (existingRequest) {
-            throw new ConflictException('Pending request already exists for this role');
+            // Allow updating the existing request if it's the same role or a new role
+            if (existingRequest.requestedRole === requestedRole) {
+                throw new ConflictException('Pending request already exists for this role');
+            }
+            // Update existing request with new role
+            return await this.prisma.roleRequest.update({
+                where: { id: existingRequest.id },
+                data: { requestedRole, updatedAt: new Date() },
+            });
+            // throw new ConflictException('Pending request already exists for this role');
         }
-        
+
         // Verify user exists before creating request
         const user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user) {
             throw new NotFoundException('User not found');
         }
-
+        // Create new request if no pending request exists
         return await this.prisma.roleRequest.create({
             data: { userId, requestedRole },
         });
@@ -248,8 +426,9 @@ export class AuthService {
                 throw new UnauthorizedException('Only Developer can view role requests');
             }
             const requests = await this.prisma.roleRequest.findMany({
-                where: { status: 'PENDING' },
-                include: { user: true },
+                // Fetch all requests, not just PENDING
+                // where: { status: 'PENDING' },
+                include: { user: { include: { role: true } } }, // Include role name
             });
             return requests.length > 0 ? requests : []; // Return empty array if no requests
         } catch (error) {
@@ -365,7 +544,7 @@ export class AuthService {
     async getPendingShops() {
         return await this.prisma.shop.findMany({
             where: { status: 'PENDING' },
-            include: { owner: true },
+            include: { owner: { include: { role: true } } },
         });
     }
 
@@ -471,17 +650,157 @@ export class AuthService {
 
     // 🗂️ Category Management
     async getCategories() {
-        return await this.prisma.category.findMany();
+        return await this.prisma.category.findMany({
+            include: {
+                createdBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+                updatedBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+            },
+        });
     }
 
-    async createCategory(createCategoryDto: CreateCategoryDto) {
-        const { name } = createCategoryDto;
-        const existingCategory = await this.prisma.category.findUnique({ where: { name } });
+    async createCategory(createCategoryDto: CreateCategoryDto, userId: number) {
+        const { id, name } = createCategoryDto;
+
+        // Validate 4-digit ID
+        if (id > 9999 || id < 1) {
+            throw new BadRequestException('Category ID must be a 4-digit number (1-9999)');
+        }
+        // Check for existing Category ID
+        const existingCategory = await this.prisma.category.findUnique({ where: { id } });
         if (existingCategory) {
-            throw new ConflictException('Category already exists');
+            throw new ConflictException('Category ID already exists');
+        }
+        // Check for existing Category Name
+        const existingName = await this.prisma.category.findUnique({ where: { name } });
+        if (existingName) {
+            throw new ConflictException('Category Name already exists');
         }
         return await this.prisma.category.create({
-            data: { name },
+            data: {
+                id,
+                name,
+                createdById: userId,
+                createdAt: new Date(),
+            },
+            include: {
+                createdBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+            },
+        });
+    }
+
+    async updateCategoryGrock(id: number, updateCategoryDto: UpdateCategoryDto, userId: number) {
+        const category = await this.prisma.category.findUnique({ where: { id } });
+
+        if (!category) {
+            throw new NotFoundException('Category not found');
+        }
+
+        const { id: newId, name } = updateCategoryDto;
+        const data: any = {};
+
+        // Validate and check new ID 
+        if (newId) {
+            if (newId > 9999 || newId < 1) {
+                throw new BadRequestException('Category ID must be a 4-digit number (1-9999)');
+            }
+            if (newId !== id) {
+                const existingCategory = await this.prisma.category.findUnique({ where: { id: newId } });
+                if (existingCategory) {
+                    throw new ConflictException('New category ID already exists');
+                }
+                data.id = newId;
+            }
+        }
+
+        // Validate and check new name if provided
+        if (name) {
+            const existingName = await this.prisma.category.findUnique({ where: { name } });
+            if (existingName && existingName.id !== id) {
+                throw new ConflictException('Category name already exists');
+            }
+            data.name = name;
+        }
+
+        // Only update if there are changes
+        if (Object.keys(data).length > 0) {
+            data.updatedById = userId;
+            data.updatedAt = new Date();
+        } else {
+            return category; // No changes, return original category
+        }
+
+        return await this.prisma.category.update({
+            where: { id }, // Use original ID for the update
+            data,
+            include: {
+                createdBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+                updatedBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+            },
+        });
+    }
+
+    async updateCategory(id: number, updateCategoryDto: UpdateCategoryDto, userId: number) {
+        const category = await this.prisma.category.findUnique({ where: { id } });
+
+        if (!category) {
+            throw new NotFoundException('Category not found');
+        }
+
+        const { id: newId, name } = updateCategoryDto;
+        // const data: any = {};
+
+        // ✅ Check if the new ID is different and valid
+        if (newId !== undefined && newId !== id) {
+            if (newId > 9999 || newId < 1) {
+                throw new BadRequestException('Category ID must be a 4-digit number (1-9999)');
+            }
+            const idExists = await this.prisma.category.findUnique({ where: { id: newId } });
+            if (idExists) {
+                throw new ConflictException('Category ID already exists');
+            }
+        }
+
+        // ✅ Check if the new name is different and valid
+        if (name) {
+            const nameExists = await this.prisma.category.findUnique({ where: { name } });
+            if (nameExists && nameExists.id !== id) {
+                throw new ConflictException('Category name already exists');
+            }
+        }
+
+        // ✅ Use Prisma transaction when updating ID
+        if (newId !== undefined && newId !== id) {
+            return await this.prisma.$transaction([
+                this.prisma.category.delete({ where: { id } }),
+                this.prisma.category.create({
+                    data: {
+                        id: newId,
+                        name: name ?? category.name,
+                        createdById: category.createdById,
+                        createdAt: category.createdAt,
+                        updatedById: userId,
+                        updatedAt: new Date(),
+                    },
+                    include: {
+                        createdBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+                        updatedBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+                    },
+                }),
+            ]).then(res => res[1]); // return created category
+        }
+
+        // ✅ Standard update (if ID is not changed)
+        return await this.prisma.category.update({
+            where: { id },
+            data: {
+                ...(name ? { name } : {}),
+                updatedById: userId,
+                updatedAt: new Date(),
+            },
+            include: {
+                createdBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+                updatedBy: { select: { id: true, username: true, role: { select: { name: true } }, profilePicturePath: true } },
+            },
         });
     }
 
@@ -619,6 +938,19 @@ export class AuthService {
         });
     }
 
+    async getAdminOrders(userId: number) {
+        const shops = await this.prisma.shop.findMany({
+            where: { ownerId: userId }, // Fetch shops owned by the user
+            select: { id: true },
+        });
+        const shopIds = shops.map((shop) => shop.id);
+
+        return await this.prisma.order.findMany({
+            where: { shopId: { in: shopIds } },
+            include: { product: true, user: true },
+        });
+    }
+
     async getAllOrders() {
         return await this.prisma.order.findMany({
             include: { product: true, user: true },
@@ -709,6 +1041,35 @@ export class AuthService {
             throw new NotFoundException('Warehouse not found for this supplier');
         }
         return await this.prisma.warehouse.delete({ where: { supplierId } });
+    }
+
+    async getPendingWarehouses() {
+        return await this.prisma.warehouse.findMany({
+            where: { status: 'PENDING' },
+            include: { supplier: { include: { role: true } } },
+        });
+    }
+
+    async approveWarehouse(warehouseId: number) {
+        const warehouse = await this.prisma.warehouse.findUnique({ where: { id: warehouseId } });
+        if (!warehouse) {
+            throw new NotFoundException('Warehouse not found');
+        }
+        return await this.prisma.warehouse.update({
+            where: { id: warehouseId },
+            data: { status: 'APPROVED' },
+        });
+    }
+
+    async rejectWarehouse(warehouseId: number) {
+        const warehouse = await this.prisma.warehouse.findUnique({ where: { id: warehouseId } });
+        if (!warehouse) {
+            throw new NotFoundException('Warehouse not found');
+        }
+        return await this.prisma.warehouse.update({
+            where: { id: warehouseId },
+            data: { status: 'REJECTED' },
+        });
     }
 
     async getWarehouse(supplierId: number) {

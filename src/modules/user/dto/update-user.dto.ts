@@ -1,4 +1,4 @@
-import { IsString, IsEmail, IsOptional, MinLength } from 'class-validator';
+import { IsString, IsOptional, Matches } from 'class-validator';
 
 class ProfileDto {
     @IsString()
@@ -18,22 +18,22 @@ class ProfileDto {
     country?: string;
 }
 
-export class SignupDto {
+export class UpdateUserDto {
+    @IsString()
     @IsOptional()
-    profile?: ProfileDto;
+    username?: string;
 
     @IsString()
-    username: string;
-
-    @IsEmail()
     @IsOptional()
     email?: string;
 
     @IsString()
     @IsOptional()
+    @Matches(/^\+\d{1,2}\s\d{10}$/, {
+        message: 'Phone number must start with + followed by 1-2 digits country code and 10 digits (e.g., +12025550123)',
+    })
     phone?: string;
 
-    @IsString()
-    @MinLength(6)
-    password: string;
+    @IsOptional()
+    profile?: ProfileDto;
 }
