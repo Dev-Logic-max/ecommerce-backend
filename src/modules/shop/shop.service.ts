@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateShopDto } from '../auth/dto/create-shop.dto';
-import { UpdateShopDto } from '../auth/dto/update-shop.dto';
+import { CreateShopDto } from './dto/create-shop.dto';
+import { UpdateShopDto } from './dto/update-shop.dto';
+import { SHOP_DEFAULTS } from 'src/config/defaults';
 
 @Injectable()
 export class ShopService {
@@ -19,6 +20,23 @@ export class ShopService {
             data: {
                 name: dto.name,
                 description: dto.description,
+                category: dto.category,
+                subcategories: dto.subcategories,
+                address: dto.address,
+                city: dto.city,
+                state: dto.state,
+                zipCode: dto.zipCode,
+                phone: dto.phone,
+                email: dto.email,
+                businessLicense: dto.businessLicense,
+                taxId: dto.taxId,
+                spaceCapacity: dto.spaceCapacity,
+                productCapacity: dto.productCapacity,
+                features: dto.features || SHOP_DEFAULTS.features, // Use dto value or defaults,
+                returnPolicy: dto.returnPolicy,
+                shippingPolicy: dto.shippingPolicy,
+                privacyPolicy: dto.privacyPolicy,
+                progress: dto.progress,
                 ownerId: userId,
                 status: 'PENDING',
             },
@@ -33,7 +51,27 @@ export class ShopService {
 
         return await this.prisma.shop.update({
             where: { id: shopId },
-            data: dto,
+            data: {
+                name: dto.name,
+                description: dto.description,
+                category: dto.category,
+                subcategories: dto.subcategories,
+                address: dto.address,
+                city: dto.city,
+                state: dto.state,
+                zipCode: dto.zipCode,
+                phone: dto.phone,
+                email: dto.email,
+                businessLicense: dto.businessLicense,
+                taxId: dto.taxId,
+                spaceCapacity: dto.spaceCapacity,
+                productCapacity: dto.productCapacity,
+                features: dto.features,
+                returnPolicy: dto.returnPolicy,
+                shippingPolicy: dto.shippingPolicy,
+                privacyPolicy: dto.privacyPolicy,
+                progress: dto.progress,
+            },
         });
     }
 

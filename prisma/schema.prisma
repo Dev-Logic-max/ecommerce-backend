@@ -93,7 +93,24 @@ model Shop {
   id          Int          @id @default(autoincrement())
   name        String
   description String?
-  ownerId     Int
+  category    String?      // Optional single category
+  subcategories Json?      @default("[]") // Nullable JSON array, default to empty array
+  address       String?      // Optional
+  city          String?      // Optional
+  state         String?      // Optional
+  zipCode       String?      // Optional
+  phone         String?      // Optional
+  email         String?      // Optional
+  businessLicense String?    // Optional
+  taxId         String?      // Optional
+  spaceCapacity String?      // Optional
+  productCapacity String?    // Optional
+  features      Json?        // Optional JSON, no default here
+  returnPolicy  String?      // Optional
+  shippingPolicy String?     // Optional
+  privacyPolicy String?      // Optional
+  progress      Float?       // Nullable float to store percentage (0-100)
+  ownerId       Int          // Required, links to User
   owner       User         @relation(fields: [ownerId], references: [id])
   products    Product[]    // Direct relation to products
   sales       ShopSale[]   // Shops listed for sale
